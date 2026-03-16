@@ -2,6 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
+<meta name="app-version" content="v1.0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hypoteční sazby CZ</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -123,7 +124,10 @@
       <p id="header-sub">Načítám uložená data…</p>
     </div>
     <div class="header-right">
-      <div class="sync-row"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">—</span></div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <a id="version-badge" href="#" target="_blank" style="font-size:11px;padding:2px 8px;border-radius:4px;background:var(--bg2);border:0.5px solid var(--border);color:var(--text2);text-decoration:none;display:none;">—</a>
+        <div class="sync-row"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">—</span></div>
+      </div>
       <div class="export-bar">
         <button class="exp-btn csv" onclick="exportCSV()">CSV</button>
         <button class="exp-btn xlsx" onclick="exportXLSX()">XLSX</button>
@@ -138,7 +142,9 @@
     <button class="tab" onclick="switchTab('graf',this)">Graf</button>
     <button class="tab" onclick="switchTab('tabulka',this)">Historická data</button>
     <button class="tab" onclick="switchTab('zadat',this)">Zadat sazbu</button>
+    <button class="tab" onclick="switchTab('banky',this)">Správa bank</button>
     <button class="tab" onclick="switchTab('nastaveni',this)">Nastavení</button>
+    <button class="tab" onclick="switchTab('aktualizace',this)" style="border-color:var(--green);color:var(--green);">↻ Aktualizovat</button>
   </div>
 
   <!-- PŘEHLED -->
@@ -342,11 +348,78 @@
     </div>
   </div>
 
+  <!-- SPRÁVA BANK -->
+  <div id="tab-banky" class="section">
+    <div class="card">
+      <div class="section-title">Aktivní banky</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px;">Zaškrtnuté banky se zobrazují v přehledu, grafech a tabulkách. Pořadí lze měnit přetažením.</p>
+      <div id="bank-list-manage"></div>
+      <div style="margin-top:14px;padding-top:14px;border-top:0.5px solid var(--border);">
+        <div class="section-title">Přidat banku</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <div class="form-label">Název banky</div>
+            <input type="text" id="new-bank-name" placeholder="např. Air Bank" oninput="previewBankColor()">
+          </div>
+          <div class="form-group">
+            <div class="form-label">Barva v grafu</div>
+            <input type="color" id="new-bank-color" value="#7F77DD" style="height:38px;padding:2px 4px;cursor:pointer;">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="addCustomBank()">Přidat banku</button>
+        <span id="add-bank-msg" style="font-size:12px;margin-left:10px;color:var(--success-text);"></span>
+      </div>
+    </div>
+    <div class="info-note">
+      Výchozí banky (Česká spořitelna, ČSOB, KB, Raiffeisenbank, Moneta, ČNB) nelze smazat — lze je pouze skrýt odškrtnutím.
+      Vlastní banky lze smazat tlačítkem ✕.
+    </div>
+  </div>
+
+  <!-- AKTUALIZACE -->
+  <div id="tab-aktualizace" class="section">
+    <div class="card">
+      <div class="section-title">Aktualizace sazeb přes AI</div>
+      <div class="info-note" style="margin-bottom:16px;">
+        Claude prohledá <strong>hypoindex.cz</strong> a stáhne aktuální sazby všech aktivních bank.
+        Výsledky se automaticky uloží do aplikace — žádný soubor ke stahování.
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+        <button class="btn btn-primary" onclick="fetchRatesViaAI()" id="ai-update-btn">↻ Stáhnout aktuální sazby přes AI</button>
+        <span id="ai-update-last" style="font-size:12px;color:var(--text2);"></span>
+      </div>
+      <div id="ai-update-status"></div>
+    </div>
+    <div class="card">
+      <div class="section-title">Ruční import CSV</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Alternativně importuj CSV soubor stažený z chatu nebo z ČNB ARAD.</p>
+      <label class="btn" style="cursor:pointer;display:inline-block;">
+        Vybrat CSV soubor
+        <input type="file" accept=".csv" style="display:none;" onchange="importAnyCsv(this)">
+      </label>
+      <span id="manual-import-status" style="font-size:12px;color:var(--success-text);margin-left:10px;"></span>
+    </div>
+  </div>
+
 </div><!-- .app -->
 
 <script>
-const BANKS = ['Česká spořitelna','ČSOB','Komerční banka','Raiffeisenbank','Moneta','ČNB — průměr trhu'];
-const COLORS = ['#185FA5','#0F6E56','#993C1D','#993556','#3B6D11','#888780'];
+const DEFAULT_BANKS = [
+  { name: 'Česká spořitelna', color: '#185FA5', removable: false },
+  { name: 'ČSOB',             color: '#0F6E56', removable: false },
+  { name: 'Komerční banka',   color: '#993C1D', removable: false },
+  { name: 'Raiffeisenbank',   color: '#993556', removable: false },
+  { name: 'Moneta',           color: '#3B6D11', removable: false },
+  { name: 'ČNB — průměr trhu', color: '#888780', removable: false },
+];
+let bankConfig = JSON.parse(localStorage.getItem('hypo:banks') || 'null') || DEFAULT_BANKS.map(b=>({...b, active:true}));
+function saveBankConfig() { localStorage.setItem('hypo:banks', JSON.stringify(bankConfig)); }
+function getBanks() { return bankConfig.map(b=>b.name); }
+function getColors() { return bankConfig.map(b=>b.color); }
+function getActiveBanks() { return bankConfig.filter(b=>b.active).map(b=>b.name); }
+// Keep legacy compatibility
+const BANKS = getBanks();
+const COLORS = getColors();
 const FIXATIONS = ['1y','3y','5y','10y'];
 const FIX_LABELS = {'1y':'1 rok','3y':'3 roky','5y':'5 let','10y':'10 let'};
 const LS = {
@@ -356,8 +429,8 @@ const LS = {
 };
 
 let currentFix = '5y';
-let activeBankSet = new Set(BANKS);
-let activeBankSetHist = new Set(BANKS);
+let activeBankSet = new Set(getActiveBanks());
+let activeBankSetHist = new Set(getActiveBanks());
 let histSourceFilter = 'all';
 let grafSourceFilter = 'all';
 let chart = null;
@@ -548,7 +621,7 @@ function renderMetrics() {
   const cnbLatest = getLatest('ČNB — průměr trhu', '5y');
   const items = [
     { label: 'ČNB průměr trhu', val: cnbLatest ? cnbLatest.rate.toFixed(2) + '%' : '—', sub: 'zdroj: ČNB ARAD · 5 let', change: null },
-    ...BANKS.filter(b => b !== 'ČNB — průměr trhu').slice(0, 4).map(bank => {
+    ...getActiveBanks().filter(b => b !== 'ČNB — průměr trhu').slice(0, 5).map(bank => {
       const cur = getLatest(bank, '5y');
       const sorted = getAllData().filter(r => r.bank === bank && r.fix === '5y').sort((a, b) => b.date.localeCompare(a.date));
       const prev = sorted[1];
@@ -564,7 +637,7 @@ function renderMetrics() {
 }
 
 function renderCurrentTable() {
-  const allBanks = ['ČNB — průměr trhu', ...BANKS.filter(b => b !== 'ČNB — průměr trhu')];
+  const allBanks = ['ČNB — průměr trhu', ...getActiveBanks().filter(b => b !== 'ČNB — průměr trhu')];
   document.getElementById('current-tbody').innerHTML = allBanks.map(bank => {
     const r1 = getLatest(bank, '1y'), r3 = getLatest(bank, '3y'), r5 = getLatest(bank, '5y'), r10 = getLatest(bank, '10y');
     const src = r5 ? r5.source : '—';
@@ -575,27 +648,31 @@ function renderCurrentTable() {
 }
 
 function buildFilters() {
-  document.getElementById('bank-filters').innerHTML = '<span class="filter-label">Banka:</span>' + BANKS.map((b, i) => `<button class="filter-btn active" style="border-left:3px solid ${COLORS[i]}" onclick="toggleBank(${i},this)">${b === 'ČNB — průměr trhu' ? 'ČNB' : b.split(' ')[0]}</button>`).join('');
-  document.getElementById('history-filters').innerHTML = '<span class="filter-label">Banka:</span>' + BANKS.map((b, i) => `<button class="filter-btn active" style="border-left:3px solid ${COLORS[i]}" onclick="toggleHistBank(${i},this)">${b === 'ČNB — průměr trhu' ? 'ČNB' : b.split(' ')[0]}</button>`).join('');
+  const active = bankConfig.filter(b=>b.active);
+  ['bank-filters','history-filters'].forEach((id,fi) => {
+    document.getElementById(id).innerHTML = '<span class="filter-label">Banka:</span>' +
+      active.map((b,i) => `<button class="filter-btn active" style="border-left:3px solid ${b.color}" onclick="${fi===0?'toggleBankFilter':'toggleHistBankFilter'}('${b.name.replace(/'/g,"\'")}',this)">${b.name==='ČNB — průměr trhu'?'ČNB':b.name.split(' ')[0]}</button>`).join('');
+  });
 }
+function toggleBankFilter(name, btn) { btn.classList.toggle('active'); if(activeBankSet.has(name))activeBankSet.delete(name);else activeBankSet.add(name); renderChart(); }
+function toggleHistBankFilter(name, btn) { btn.classList.toggle('active'); if(activeBankSetHist.has(name))activeBankSetHist.delete(name);else activeBankSetHist.add(name); renderHistory(); }
 
-function toggleBank(i, btn) { const b = BANKS[i]; btn.classList.toggle('active'); if (activeBankSet.has(b)) activeBankSet.delete(b); else activeBankSet.add(b); renderChart(); }
-function toggleHistBank(i, btn) { const b = BANKS[i]; btn.classList.toggle('active'); if (activeBankSetHist.has(b)) activeBankSetHist.delete(b); else activeBankSetHist.add(b); renderHistory(); }
+// toggleBank/toggleHistBank replaced by toggleBankFilter/toggleHistBankFilter
 function setGrafSource(src, btn) { btn.closest('.filter-row').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); grafSourceFilter = src; renderChart(); }
 function setHistSource(src, btn) { btn.closest('.filter-row').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); histSourceFilter = src; renderHistory(); }
 function setFix(fix, btn) { currentFix = fix; btn.closest('.filter-row').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderChart(); }
 
 function renderChart() {
-  let data = getAllData().filter(r => r.fix === currentFix && activeBankSet.has(r.bank));
+  let data = getAllData().filter(r => r.fix === currentFix && activeBankSet.has(r.bank) && getActiveBanks().includes(r.bank));
   if (grafSourceFilter !== 'all') data = data.filter(r => r.source === grafSourceFilter);
   const dates = [...new Set(data.map(r => r.date))].sort();
-  const datasets = BANKS.filter(b => activeBankSet.has(b)).map(bank => {
-    const bi = BANKS.indexOf(bank);
+  const datasets = getActiveBanks().filter(b => activeBankSet.has(b)).map(bank => {
+    const bi = bankConfig.findIndex(b=>b.name===bank); const bankColor = bi>=0?bankConfig[bi].color:'#888';
     let bdata = getAllData().filter(r => r.bank === bank && r.fix === currentFix);
     if (grafSourceFilter !== 'all') bdata = bdata.filter(r => r.source === grafSourceFilter);
-    return { label: bank, data: dates.map(d => { const r = bdata.find(x => x.date === d); return r ? r.rate : null; }), borderColor: COLORS[bi], backgroundColor: COLORS[bi] + '22', borderWidth: 2, pointRadius: 3, tension: 0.3, fill: false, spanGaps: true };
+    return { label: bank, data: dates.map(d => { const r = bdata.find(x => x.date === d); return r ? r.rate : null; }), borderColor: bankColor, backgroundColor: bankColor + '22', borderWidth: 2, pointRadius: 3, tension: 0.3, fill: false, spanGaps: true };
   }).filter(ds => ds.data.some(v => v !== null));
-  document.getElementById('chart-legend').innerHTML = datasets.map(ds => { const bi = BANKS.indexOf(ds.label); return `<span><span class="legend-dot" style="background:${COLORS[bi]}"></span>${ds.label}</span>`; }).join('');
+  document.getElementById('chart-legend').innerHTML = datasets.map(ds => { const bi = bankConfig.findIndex(b=>b.name===ds.label); const c=bi>=0?bankConfig[bi].color:'#888'; return `<span><span class="legend-dot" style="background:${c}"></span>${ds.label}</span>`; }).join('');
   if (chart) chart.destroy();
   chart = new Chart(document.getElementById('mainChart'), { type: 'line', data: { labels: dates.map(d => d.slice(0, 7)), datasets }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } }, scales: { y: { min: 3.0, max: 7.0, ticks: { callback: v => v.toFixed(2) + '%', font: { size: 11 } }, grid: { color: 'rgba(128,128,128,0.1)' } }, x: { ticks: { autoSkip: true, maxTicksLimit: 10, font: { size: 11 } }, grid: { display: false } } } } });
 }
@@ -644,7 +721,7 @@ function exportCSV() {
 
 function exportXLSX() {
   const wb = XLSX.utils.book_new();
-  const allBanks = ['ČNB — průměr trhu', ...BANKS.filter(b => b !== 'ČNB — průměr trhu')];
+  const allBanks = ['ČNB — průměr trhu', ...getActiveBanks().filter(b => b !== 'ČNB — průměr trhu')];
   const cur = allBanks.map(bank => {
     const r1 = getLatest(bank, '1y'), r3 = getLatest(bank, '3y'), r5 = getLatest(bank, '5y'), r10 = getLatest(bank, '10y');
     return { Banka: bank, '1 rok (%)': r1 ? r1.rate : '-', '3 roky (%)': r3 ? r3.rate : '-', '5 let (%)': r5 ? r5.rate : '-', '10 let (%)': r10 ? r10.rate : '-', Zdroj: r5 ? r5.source : '-', Datum: r5 ? r5.date : '-', 'URL zdroje': r5 ? r5.sourceUrl || '' : '' };
@@ -685,6 +762,238 @@ document.getElementById('f-date').value = new Date().toISOString().slice(0, 10);
 demoData = genDemo();
 buildFilters();
 loadFromStorage();
+renderBankManagement();
+updateAILastFetch();
+
+// ── Správa bank ─────────────────────────────────────────────────────────────
+
+function renderBankManagement() {
+  const el = document.getElementById('bank-list-manage');
+  if (!el) return;
+  el.innerHTML = bankConfig.map((b, i) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--border);" id="bank-row-${i}">
+      <input type="checkbox" ${b.active?'checked':''} onchange="toggleBankActive(${i},this)" style="width:auto;cursor:pointer;">
+      <span style="width:14px;height:14px;border-radius:3px;background:${b.color};flex-shrink:0;display:inline-block;"></span>
+      <span style="flex:1;font-size:13px;color:var(--text);">${b.name}</span>
+      ${b.removable ? `<button onclick="removeBank(${i})" style="background:none;border:none;cursor:pointer;color:var(--text2);font-size:14px;padding:0 4px;" title="Odebrat">✕</button>` : '<span style="width:24px;"></span>'}
+    </div>`).join('');
+}
+
+function toggleBankActive(i, cb) {
+  bankConfig[i].active = cb.checked;
+  saveBankConfig();
+  rebuildFilters();
+  renderAll();
+}
+
+function addCustomBank() {
+  const name = document.getElementById('new-bank-name').value.trim();
+  const color = document.getElementById('new-bank-color').value;
+  const msg = document.getElementById('add-bank-msg');
+  if (!name) { msg.style.color='var(--danger-text)'; msg.textContent='Zadejte název banky.'; return; }
+  if (bankConfig.find(b => b.name.toLowerCase() === name.toLowerCase())) {
+    msg.style.color='var(--danger-text)'; msg.textContent='Banka již existuje.'; return;
+  }
+  bankConfig.push({ name, color, active: true, removable: true });
+  saveBankConfig();
+  document.getElementById('new-bank-name').value = '';
+  msg.style.color='var(--success-text)';
+  msg.textContent=`${name} přidána.`;
+  renderBankManagement();
+  rebuildFilters();
+  renderAll();
+  // Add to f-bank select
+  const sel = document.getElementById('f-bank');
+  const opt = document.createElement('option');
+  opt.value = name; opt.textContent = name;
+  sel.appendChild(opt);
+}
+
+function removeBank(i) {
+  const name = bankConfig[i].name;
+  if (!confirm(`Odebrat banku "${name}"? Záznamy sazeb zůstanou zachovány.`)) return;
+  bankConfig.splice(i, 1);
+  saveBankConfig();
+  renderBankManagement();
+  rebuildFilters();
+  renderAll();
+}
+
+function rebuildFilters() {
+  // Rebuild active sets with current banks
+  activeBankSet = new Set(getActiveBanks());
+  activeBankSetHist = new Set(getActiveBanks());
+  buildFilters();
+}
+
+function previewBankColor() {}
+
+// Rebuild f-bank select from bankConfig
+function rebuildBankSelect() {
+  const sel = document.getElementById('f-bank');
+  sel.innerHTML = bankConfig.filter(b=>b.name!=='ČNB — průměr trhu').map(b=>`<option>${b.name}</option>`).join('');
+}
+
+// ── AI aktualizace sazeb ──────────────────────────────────────────────────────
+
+function updateAILastFetch() {
+  const last = localStorage.getItem('hypo:lastAIFetch');
+  if (last) document.getElementById('ai-update-last').textContent = 'Poslední aktualizace: ' + last;
+}
+
+async function fetchRatesViaAI() {
+  const btn = document.getElementById('ai-update-btn');
+  const statusEl = document.getElementById('ai-update-status');
+  btn.disabled = true;
+  btn.textContent = '↻ Stahuji...';
+  statusEl.innerHTML = '<div class="alert alert-info">Volám AI — může trvat 15–30 sekund...</div>';
+
+  const activeBankNames = bankConfig.filter(b => b.active && b.name !== 'ČNB — průměr trhu').map(b => b.name);
+  const prompt = `Jdi na https://www.hypoindex.cz/hypotecni-sazby-bank/ a najdi aktuální hypoteční sazby pro tyto banky: ${activeBankNames.join(', ')}.
+Vrať POUZE validní JSON v tomto formátu, bez jakéhokoliv dalšího textu:
+{
+  "datum": "YYYY-MM-DD",
+  "zdroj": "hypoindex.cz",
+  "sazby": [
+    {"banka": "Název banky", "1rok": 4.89, "3roky": 4.59, "5let": 4.79, "10let": null}
+  ]
+}
+Pokud sazba není dostupná, použij null. Datum = dnešní datum.`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await resp.json();
+    const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+
+    // Extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*"sazby"[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('AI nevrátilo správný formát dat.');
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    // Import into manualData
+    const fixMap = {'1rok':'1y','3roky':'3y','5let':'5y','10let':'10y'};
+    const fixLabels = {'1rok':'1 rok','3roky':'3 roky','5let':'5 let','10let':'10 let'};
+    let imported = 0;
+    const datum = parsed.datum || new Date().toISOString().slice(0,7)+'-01';
+    for (const row of parsed.sazby) {
+      for (const [key, fix] of Object.entries(fixMap)) {
+        const rate = row[key];
+        if (rate === null || rate === undefined) continue;
+        const entry = { bank: row.banka, fix, rate: parseFloat(rate.toFixed(2)), date: datum, source: 'manual', sourceUrl: parsed.zdroj || 'hypoindex.cz' };
+        const idx = manualData.findIndex(d => d.bank===entry.bank && d.fix===fix && d.date===datum);
+        if (idx >= 0) manualData[idx] = entry; else manualData.push(entry);
+        imported++;
+      }
+    }
+    const now = new Date().toLocaleDateString('cs-CZ');
+    localStorage.setItem('hypo:lastAIFetch', now);
+    saveToStorage();
+    renderAll();
+    btn.disabled = false; btn.textContent = '↻ Stáhnout aktuální sazby přes AI';
+    statusEl.innerHTML = `<div class="alert alert-success">✓ Načteno ${imported} sazeb pro ${parsed.sazby.length} bank (${datum}).</div>`;
+    document.getElementById('ai-update-last').textContent = 'Poslední aktualizace: ' + now;
+
+    // Show preview table
+    let table = '<div class="table-wrap" style="margin-top:12px;"><table><thead><tr><th>Banka</th><th>1 rok</th><th>3 roky</th><th>5 let</th><th>10 let</th></tr></thead><tbody>';
+    for (const row of parsed.sazby) {
+      table += `<tr><td><strong>${row.banka}</strong></td><td>${row['1rok']??'—'}%</td><td>${row['3roky']??'—'}%</td><td>${row['5let']??'—'}%</td><td>${row['10let']??'—'}%</td></tr>`;
+    }
+    table += '</tbody></table></div>';
+    statusEl.innerHTML += table;
+
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '↻ Stáhnout aktuální sazby přes AI';
+    statusEl.innerHTML = `<div class="alert alert-danger">Chyba: ${e.message}</div>`;
+  }
+}
+
+function importAnyCsv(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('manual-import-status');
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const lines = e.target.result.trim().split('\n');
+      let imported = 0;
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim(); if (!line) continue;
+        const parts = []; let cur = '', inQ = false;
+        for (const c of line) { if (c==='"'){inQ=!inQ;} else if(c===','&&!inQ){parts.push(cur.trim());cur='';} else{cur+=c;} }
+        parts.push(cur.trim());
+        if (parts.length < 4) continue;
+        const date=parts[0].replace(/"/g,'').trim(), bank=parts[1].replace(/"/g,'').trim();
+        const fixLabel=parts[2].replace(/"/g,'').trim(), rate=parseFloat(parts[3].replace(/"/g,'').replace(',','.'));
+        const source=(parts[4]||'manual').replace(/"/g,'').trim(), sourceUrl=(parts[5]||'').replace(/"/g,'').trim();
+        const fixMap={'1 rok':'1y','3 roky':'3y','5 let':'5y','10 let':'10y'};
+        const fix=fixMap[fixLabel]||'5y';
+        if(!date||isNaN(rate)) continue;
+        const entry={bank,fix,rate,date,source,sourceUrl};
+        const arr = source==='cnb' ? cnbData : manualData;
+        const idx=arr.findIndex(d=>d.bank===bank&&d.fix===fix&&d.date===date);
+        if(idx>=0) arr[idx]=entry; else arr.push(entry);
+        imported++;
+      }
+      saveToStorage(); renderAll();
+      statusEl.textContent=`✓ Importováno ${imported} záznamů.`;
+      input.value='';
+    } catch(err) { statusEl.textContent='Chyba: '+err.message; }
+  };
+  reader.readAsText(file,'UTF-8');
+}
+
+// Verze aplikace z GitHub Releases
+async function loadVersionBadge() {
+  const badge = document.getElementById('version-badge');
+  if (!badge) return;
+
+  // Lokálně — zobraz statickou verzi
+  if (location.protocol === 'file:') {
+    badge.textContent = 'lokální verze';
+    badge.style.display = 'inline';
+    return;
+  }
+
+  // Online — zjisti repo z URL (github.io/repo-name)
+  try {
+    const parts = location.hostname.split('.');
+    const owner = parts[0];
+    const repo  = location.pathname.split('/')[1] || '';
+    if (!owner || !repo) return;
+
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+    const resp = await fetch(apiUrl, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!resp.ok) throw new Error('no release');
+    const data = await resp.json();
+
+    const tag = data.tag_name;                          // např. v1.2
+    const date = new Date(data.published_at).toLocaleDateString('cs-CZ');
+    const url  = data.html_url;
+
+    badge.textContent = `${tag} · ${date}`;
+    badge.href = url;
+    badge.title = data.name || tag;
+    badge.style.display = 'inline';
+    badge.style.color = 'var(--green)';
+    badge.style.borderColor = 'var(--green)';
+  } catch(e) {
+    // Bez releasu — zobraz commit hash z meta tagu (pokud existuje)
+    const meta = document.querySelector('meta[name="app-version"]');
+    if (meta) {
+      badge.textContent = meta.content;
+      badge.style.display = 'inline';
+    }
+  }
+}
 
 // Auto-load latest CSV from GitHub if running online
 async function autoLoadFromGitHub() {
@@ -736,6 +1045,7 @@ async function autoLoadFromGitHub() {
   if (loaded > 0) { renderAll(); }
 }
 autoLoadFromGitHub();
+loadVersionBadge();
 </script>
 </body>
 </html>
