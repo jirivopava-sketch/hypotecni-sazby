@@ -381,8 +381,8 @@
     <div class="card">
       <div class="section-title">Aktualizace sazeb přes AI</div>
       <div class="info-note" style="margin-bottom:16px;">
-        Claude prohledá <strong>hypoindex.cz</strong> a stáhne aktuální sazby všech aktivních bank.
-        Výsledky se automaticky uloží do aplikace — žádný soubor ke stahování.
+        Tlačítko otevře <strong>Claude v novém okně</strong> s předvyplněným dotazem.
+        Claude stáhne sazby z hypoindex.cz a vygeneruje CSV — to pak importuješ níže.
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
         <button class="btn btn-primary" onclick="fetchRatesViaAI()" id="ai-update-btn">↻ Stáhnout aktuální sazby přes AI</button>
@@ -841,79 +841,27 @@ function updateAILastFetch() {
   if (last) document.getElementById('ai-update-last').textContent = 'Poslední aktualizace: ' + last;
 }
 
-async function fetchRatesViaAI() {
-  const btn = document.getElementById('ai-update-btn');
-  const statusEl = document.getElementById('ai-update-status');
-  btn.disabled = true;
-  btn.textContent = '↻ Stahuji...';
-  statusEl.innerHTML = '<div class="alert alert-info">Volám AI — může trvat 15–30 sekund...</div>';
+function fetchRatesViaAI() {
+  const activeBankNames = bankConfig
+    .filter(b => b.active && b.name !== 'ČNB — průměr trhu')
+    .map(b => b.name).join(', ');
 
-  const activeBankNames = bankConfig.filter(b => b.active && b.name !== 'ČNB — průměr trhu').map(b => b.name);
-  const prompt = `Jdi na https://www.hypoindex.cz/hypotecni-sazby-bank/ a najdi aktuální hypoteční sazby pro tyto banky: ${activeBankNames.join(', ')}.
-Vrať POUZE validní JSON v tomto formátu, bez jakéhokoliv dalšího textu:
-{
-  "datum": "YYYY-MM-DD",
-  "zdroj": "hypoindex.cz",
-  "sazby": [
-    {"banka": "Název banky", "1rok": 4.89, "3roky": 4.59, "5let": 4.79, "10let": null}
-  ]
-}
-Pokud sazba není dostupná, použij null. Datum = dnešní datum.`;
+  // Otevře claude.ai s předvyplněným dotazem
+  const prompt = encodeURIComponent(
+    'Vyhledej aktuální hypoteční sazby z hypoindex.cz pro tyto banky: ' + activeBankNames + '. ' +
+    'Pro každou banku uveď sazby pro fixaci 1 rok, 3 roky, 5 let a 10 let. ' +
+    'Výsledek vygeneruj jako CSV soubor ke stažení s hlavičkou: ' +
+    'Datum,Banka,Fixace,Sazba (%),Zdroj,Odkaz — ' +
+    'kde Zdroj=manual a Odkaz=hypoindex.cz. Datum = první den aktuálního měsíce (YYYY-MM-01).'
+  );
+  window.open('https://claude.ai/new?q=' + prompt, '_blank');
 
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    const data = await resp.json();
-    const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
-
-    // Extract JSON from response
-    const jsonMatch = text.match(/\{[\s\S]*"sazby"[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('AI nevrátilo správný formát dat.');
-    const parsed = JSON.parse(jsonMatch[0]);
-
-    // Import into manualData
-    const fixMap = {'1rok':'1y','3roky':'3y','5let':'5y','10let':'10y'};
-    const fixLabels = {'1rok':'1 rok','3roky':'3 roky','5let':'5 let','10let':'10 let'};
-    let imported = 0;
-    const datum = parsed.datum || new Date().toISOString().slice(0,7)+'-01';
-    for (const row of parsed.sazby) {
-      for (const [key, fix] of Object.entries(fixMap)) {
-        const rate = row[key];
-        if (rate === null || rate === undefined) continue;
-        const entry = { bank: row.banka, fix, rate: parseFloat(rate.toFixed(2)), date: datum, source: 'manual', sourceUrl: parsed.zdroj || 'hypoindex.cz' };
-        const idx = manualData.findIndex(d => d.bank===entry.bank && d.fix===fix && d.date===datum);
-        if (idx >= 0) manualData[idx] = entry; else manualData.push(entry);
-        imported++;
-      }
-    }
-    const now = new Date().toLocaleDateString('cs-CZ');
-    localStorage.setItem('hypo:lastAIFetch', now);
-    saveToStorage();
-    renderAll();
-    btn.disabled = false; btn.textContent = '↻ Stáhnout aktuální sazby přes AI';
-    statusEl.innerHTML = `<div class="alert alert-success">✓ Načteno ${imported} sazeb pro ${parsed.sazby.length} bank (${datum}).</div>`;
-    document.getElementById('ai-update-last').textContent = 'Poslední aktualizace: ' + now;
-
-    // Show preview table
-    let table = '<div class="table-wrap" style="margin-top:12px;"><table><thead><tr><th>Banka</th><th>1 rok</th><th>3 roky</th><th>5 let</th><th>10 let</th></tr></thead><tbody>';
-    for (const row of parsed.sazby) {
-      table += `<tr><td><strong>${row.banka}</strong></td><td>${row['1rok']??'—'}%</td><td>${row['3roky']??'—'}%</td><td>${row['5let']??'—'}%</td><td>${row['10let']??'—'}%</td></tr>`;
-    }
-    table += '</tbody></table></div>';
-    statusEl.innerHTML += table;
-
-  } catch(e) {
-    btn.disabled = false; btn.textContent = '↻ Stáhnout aktuální sazby přes AI';
-    statusEl.innerHTML = `<div class="alert alert-danger">Chyba: ${e.message}</div>`;
-  }
+  // Show import instructions
+  document.getElementById('ai-update-status').innerHTML =
+    '<div class="alert alert-info">' +
+    '<strong>Otevřel se Claude v novém okně.</strong><br>' +
+    'Claude vygeneruje CSV soubor — stáhni ho a importuj níže tlačítkem <em>Vybrat CSV soubor</em>.' +
+    '</div>';
 }
 
 function importAnyCsv(input) {
